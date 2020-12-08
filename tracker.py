@@ -40,8 +40,10 @@ def _test_detector(net, meta, data, output_path):
         people_detections = _detect_people(net, meta, d)
 
         for detection in people_detections:
-            l, t, r, b = detection[2]
-            base = cv2.rectangle(base, (l,t), (r,b), (255,0,0), 2)
+            cx, cy, w, h = detection[2]
+            x, y = cx - (w/2), cy - (h/2)
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            base = cv2.rectangle(base, (x,y), (x+w,y+h), (255,0,0), 2)
         cv2.imwrite(out, base)
 
 
