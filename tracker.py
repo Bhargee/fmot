@@ -7,10 +7,11 @@ import cv2
 sys.path.append(os.path.join(os.getcwd(),'darknet/python/'))
 import darknet as dn
 import numpy as np
+from scipy import optimize
 
 
 DETECT_THRESH = .7
-MIN_IOU       = .2 # TODO figure out what this should be
+MIN_IOU       = .1 # TODO figure out what this should be
 
 def _get_data_raw(data_path):
     leafs = sorted(os.listdir(data_path))
@@ -53,6 +54,21 @@ def _test_detector(net, meta, data, output_path):
         cv2.imwrite(out, base)
 
 
+def _output_tracks(tracks, frame, output_path):
+    pstr = frame.decode('ascii')
+    out = os.path.join(output_path, os.path.basename(pstr))
+    base = cv2.imread(os.path.join(os.getcwd(), pstr))
+    for label, states in tracks.items():
+        most_recent = states[-1]
+        bb = _state_to_bb(most_recent)
+        cx, cy, w, h = bb
+        x, y = cx - (w/2), cy - (h/2)
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        base = cv2.rectangle(base, (x,y), (x+w,y+h), (255,0,0), 2)
+        base = cv2.putText(base, str(label), (x, y-10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0))
+    cv2.imwrite(out, base)
+
 def _iou(bb1, bb2):
     bb1_cx, bb1_cy, bb1_w, bb1_h = bb1
     bb2_cx, bb2_cy, bb2_w, bb2_h = bb2
@@ -81,14 +97,7 @@ def _state_to_bb(state):
 
 
 def _track(net, meta, data, output_path):
-    if isinstance(data, map):
-        first_frame = next(data)
-    elif isinstance(data, list):
-        first_frame = data[0]
-    else:
-        print(f'`data` should be iterator or list, is {type(data)}')
-        sys.exit(-1)
-
+    first_frame = next(data)
     tracks = defaultdict(list)
     track_id = -1
     # initialize tracker
@@ -97,19 +106,33 @@ def _track(net, meta, data, output_path):
         track_id += 1
         cx, cy, w, h = detection[2]
         tracks[track_id].append([cx, cy, w*h, w/h, 0, 0, 0])
+    _output_tracks(tracks, first_frame, output_path)
     
-    # TODO tomorrow: Hungarian algorithm for assignment
-    '''
     # process remaining frames
-    for frame in data[1:2]:
-        bbs = map(lambda d: d[2], _detect_people(net, meta, frame))
+    data = list(data)
+    for frame in data[:1]:
+        bbs = list(map(lambda d: d[2], _detect_people(net, meta, frame)))
         iter_bounds = max(len(tracks.keys()), len(bbs))
         cost_mat = np.zeros((iter_bounds, iter_bounds))
-        # TODO this is going to cause trouble 
-        for i in range(iter_bounds):
-            for j in range(iter_bounds):
-                _iou(_state_to_bb(tracks[i]), bb)
-    '''
+        keys = list(tracks.keys())
+        for i in range(min(iter_bounds, len(bbs))):
+            for j in range(min(iter_bounds,len(keys))):
+                cost_mat[i,j] = _iou(bbs[i], _state_to_bb(tracks[keys[j]][-1]))
+        # Hungarian method for assignment
+        # TODO put optimizer call in for loop condition
+        rows, cols = optimize.linear_sum_assignment(cost_mat, maximize=True)
+        for r,c in zip(rows, cols):
+            # (r,c) indexes an IOU in cost_mat, r coresponds to a detection bb
+            # c is a track from the previous frame
+            cx, cy, w, h = bbs[r]
+            state = [cx, cy, w*h, w/h, 0, 0, 0]
+            if cost_mat[r,c] >= MIN_IOU:
+                tracks[keys[c]].append(state)
+            else:
+                # this is a new detection
+                track_id += 1
+                tracks[track_id].append(state)
+        _output_tracks(tracks, frame, output_path)
 
 
 def main(gpu_ind, data_path, output_path):
