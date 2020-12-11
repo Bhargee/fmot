@@ -9,9 +9,12 @@ import darknet as dn
 import numpy as np
 from scipy import optimize
 
+from kf import KF
 
-DETECT_THRESH = .7
+
+DETECT_THRESH = .5 # from SORT paper
 MIN_IOU       = .1 # TODO figure out what this should be
+TMIN          =  1
 
 def _get_data_raw(data_path):
     leafs = sorted(os.listdir(data_path))
@@ -54,20 +57,23 @@ def _test_detector(net, meta, data, output_path):
         cv2.imwrite(out, base)
 
 
-def _output_tracks(tracks, frame, output_path):
+def _output_tracks(tracks, frame, output_path, prefix=None):
     pstr = frame.decode('ascii')
-    out = os.path.join(output_path, os.path.basename(pstr))
+    if prefix:
+        out = os.path.join(output_path, f'{prefix}_{os.path.basename(pstr)}')
+    else:
+        out = os.path.join(output_path, os.path.basename(pstr))
     base = cv2.imread(os.path.join(os.getcwd(), pstr))
-    for label, states in tracks.items():
-        most_recent = states[-1]
-        bb = _state_to_bb(most_recent)
+    for label, state in tracks.items():
+        bb = _state_to_bb(state)
         cx, cy, w, h = bb
         x, y = cx - (w/2), cy - (h/2)
         x, y, w, h = int(x), int(y), int(w), int(h)
         base = cv2.rectangle(base, (x,y), (x+w,y+h), (255,0,0), 2)
         base = cv2.putText(base, str(label), (x, y-10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0))
+                           cv2.FONT_HERSHEY_SIMPLEX, 2, (0,0,255))
     cv2.imwrite(out, base)
+
 
 def _iou(bb1, bb2):
     bb1_cx, bb1_cy, bb1_w, bb1_h = bb1
@@ -98,41 +104,72 @@ def _state_to_bb(state):
 
 def _track(net, meta, data, output_path):
     first_frame = next(data)
-    tracks = defaultdict(list)
-    track_id = -1
+    init_states = {}
+    label = -1
     # initialize tracker
     detections = _detect_people(net, meta, first_frame)
     for detection in detections:
-        track_id += 1
+        label += 1
         cx, cy, w, h = detection[2]
-        tracks[track_id].append([cx, cy, w*h, w/h, 0, 0, 0])
-    _output_tracks(tracks, first_frame, output_path)
+        init_states[label] = np.array([cx, cy, w*h, w/h, 0, 0, 0])
+
+    filt = KF(init_states)
+    _output_tracks(filt.latest_live_states(), first_frame, output_path)
     
     # process remaining frames
-    data = list(data)
-    for frame in data[:1]:
+    for frame in data:
+        # predict motion of BB for existing tracks
+        predictions = filt.predict()
         bbs = list(map(lambda d: d[2], _detect_people(net, meta, frame)))
-        iter_bounds = max(len(tracks.keys()), len(bbs))
+        keys = list(predictions.keys())
+        iter_bounds = max(len(keys), len(bbs))
+        # Hungarian method for assignment
+        # first build cost matrix
         cost_mat = np.zeros((iter_bounds, iter_bounds))
-        keys = list(tracks.keys())
         for i in range(min(iter_bounds, len(bbs))):
             for j in range(min(iter_bounds,len(keys))):
-                cost_mat[i,j] = _iou(bbs[i], _state_to_bb(tracks[keys[j]][-1]))
-        # Hungarian method for assignment
+                cost_mat[i,j] = _iou(
+                    bbs[i], 
+                    _state_to_bb(predictions[keys[j]])
+                )
         # TODO put optimizer call in for loop condition
+        # then solve the optimization problem
         rows, cols = optimize.linear_sum_assignment(cost_mat, maximize=True)
+        # assign detections to old or new tracks, as appropriate
+        # (r,c) indexes an IOU in cost_mat, r coresponds to a detection bb
+        # c is a track from the previous frame
+        assignments = {}
         for r,c in zip(rows, cols):
-            # (r,c) indexes an IOU in cost_mat, r coresponds to a detection bb
-            # c is a track from the previous frame
-            cx, cy, w, h = bbs[r]
-            state = [cx, cy, w*h, w/h, 0, 0, 0]
-            if cost_mat[r,c] >= MIN_IOU:
-                tracks[keys[c]].append(state)
+            if r < len(bbs):
+                cx, cy, w, h = bbs[r]
             else:
-                # this is a new detection
+                continue
+            state = np.array([cx, cy, w*h, w/h, 0, 0, 0])
+            if cost_mat[r,c] >= MIN_IOU: # new detection for existing track
+                assignments[keys[c]] = state
+            else: # new track
                 track_id += 1
-                tracks[track_id].append(state)
-        _output_tracks(tracks, frame, output_path)
+                filt.birth_state(track_id, state)
+        # build the measurements
+        #_output_tracks(assignments, frame, output_path, prefix='assignment')
+        ys = {}
+        for label, last_state in filt.latest_live_states().items():
+            if label in assignments:
+                astate = assignments[label]
+                ys[label] = np.array([
+                    astate[0], 
+                    astate[1],
+                    astate[2], 
+                    astate[3],
+                    astate[0]-last_state[0], 
+                    astate[1]-last_state[1],
+                    astate[2]-last_state[2]
+                ])
+            else:
+                filt.kill_state(label)
+
+        filt.update(ys, predictions)
+        _output_tracks(filt.latest_live_states(), frame, output_path)
 
 
 def main(gpu_ind, data_path, output_path):
