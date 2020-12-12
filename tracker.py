@@ -72,6 +72,7 @@ def _output_tracks(tracks, frame, output_path, prefix=None):
         base = cv2.rectangle(base, (x,y), (x+w,y+h), (255,0,0), 2)
         base = cv2.putText(base, str(label), (x, y-10),
                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0,0,255))
+
     cv2.imwrite(out, base)
 
 
@@ -139,6 +140,7 @@ def _track(net, meta, data, output_path):
         # (r,c) indexes an IOU in cost_mat, r coresponds to a detection bb
         # c is a track from the previous frame
         assignments = {}
+        new_tracks = {}
         for r,c in zip(rows, cols):
             if r < len(bbs):
                 cx, cy, w, h = bbs[r]
@@ -148,8 +150,8 @@ def _track(net, meta, data, output_path):
             if cost_mat[r,c] >= MIN_IOU: # new detection for existing track
                 assignments[keys[c]] = state
             else: # new track
-                track_id += 1
-                filt.birth_state(track_id, state)
+                label += 1
+                new_tracks[label] = state
         # build the measurements
         #_output_tracks(assignments, frame, output_path, prefix='assignment')
         ys = {}
@@ -169,6 +171,8 @@ def _track(net, meta, data, output_path):
                 filt.kill_state(label)
 
         filt.update(ys, predictions)
+        for label, state in new_tracks.items():
+            filt.birth_state(label, state)
         _output_tracks(filt.latest_live_states(), frame, output_path)
 
 

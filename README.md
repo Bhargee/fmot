@@ -15,8 +15,15 @@ The usual: `scipy`, `numpy`, `opencv`(cv2)
 
 ## TODO
 Keeping this log to help me organize work between sessions. Currently two frame
-tracking and association works w/o using the KF. Need to integrate this. Also,
-new tracks work pretty flawlessly, though `MIN_IOU` is probably way too low.
-Need to kill tracks after `T_MIN`. Also, need to profile and see if I can
+tracking and association works w/o using the KF. 
+
+Need to integrate the KF. 
+
+New tracks work pretty flawlessly, though `MIN_IOU` is probably way too low.
+Need to kill tracks after `T_MIN`. 
+
+Need to improve visualization, with colors or with cv2's GUI display.
+
+Also, need to profile and see if I can
 speedup. Maybe the cython calls to darknet are too slow, I don't know anything
 about cython. 

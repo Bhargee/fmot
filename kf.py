@@ -18,33 +18,28 @@ class KF:
         self.states = init_states # dict from `tracker.py` label to np.array (vec)
         self.live_states = set(init_states.keys())
         self.Pp = {
-            l: np.diag([2., 2., 4., 1., 1000, 1000, 1000]) for l in init_states.keys()
+            l: np.diag([2., 2., 4., 1., 100, 100, 100]) for l in init_states.keys()
          }           # dict from `tracker.py` label to np.array (mat)
 
 
     def predict(self):
         predicted_states = {}
         for label in self.live_states:
-            if len(self.states[label].shape) > 1:
-                predicted_states[label] = np.dot(KF.F, self.states[label][-1, :])
-            else:
-                predicted_states[label] = np.dot(KF.F, self.states[label])
+            predicted_states[label] = np.dot(KF.F, self.states[label])
         return predicted_states
 
 
     def latest_live_states(self):
         states = {}
         for label in self.live_states:
-            if len(self.states[label].shape) > 1:
-                states[label] = self.states[label][-1, :]
-            else:
-                states[label] = self.states[label]
+            states[label] = self.states[label]
         return states
 
     
     def birth_state(self, label, state):
         self.live_states.add(label)
         self.states[label] = state
+        self.Pp[label] = np.diag([2., 2., 4., 1., 100, 100, 100])
 
 
     def kill_state(self, label):
@@ -55,24 +50,13 @@ class KF:
         for label in ys.keys():
             y = ys[label]
             pred = preds[label]
-            if len(self.Pp[label].shape) > 2:
-                Pp = self.Pp[label][-1,:,:]
-            else:
-                Pp = self.Pp[label]
+            Pp = self.Pp[label]
             Pkm = KF.F@Pp@np.transpose(KF.F)+KF.Q
             K = Pkm@np.transpose(KF.H)@np.linalg.inv(KF.H@Pkm@np.transpose(KF.H)+KF.R)
 
-            if len(self.states[label].shape) > 2:
-                old_state = self.states[label]
-            else:
-                old_state = [self.states[label]]
-            self.states[label] = np.append(old_state,[pred+K.dot(y-KF.H.dot(pred))] ,axis=0)
+            self.states[label] = pred+K.dot(y-KF.H.dot(pred))
 
             t1 = K@KF.H
             t2 = np.eye(t1.shape[0])
             t3 = t2-t1
-            if len(self.Pp[label].shape) > 2:
-                old_covar = self.Pp[label]
-            else:
-                old_covar = [self.Pp[label]]
-            self.Pp[label] = np.append(old_covar,[t3@Pkm@np.transpose(t3)+K@KF.R@np.transpose(K)],axis=0)
+            self.Pp[label] = t3@Pkm@np.transpose(t3)+K@KF.R@np.transpose(K)
