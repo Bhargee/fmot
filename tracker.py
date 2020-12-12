@@ -13,7 +13,7 @@ from kf import KF
 
 
 DETECT_THRESH = .5 # from SORT paper
-MIN_IOU       = .1 # TODO figure out what this should be
+MIN_IOU       = .5 # TODO figure out what this should be
 TMIN          =  1
 
 def _get_data_raw(data_path):
@@ -106,13 +106,13 @@ def _state_to_bb(state):
 def _track(net, meta, data, output_path):
     first_frame = next(data)
     init_states = {}
-    label = -1
+    track_id = -1
     # initialize tracker
     detections = _detect_people(net, meta, first_frame)
     for detection in detections:
-        label += 1
+        track_id += 1
         cx, cy, w, h = detection[2]
-        init_states[label] = np.array([cx, cy, w*h, w/h, 0, 0, 0])
+        init_states[track_id] = np.array([cx, cy, w*h, w/h, 0, 0, 0])
 
     filt = KF(init_states)
     _output_tracks(filt.latest_live_states(), first_frame, output_path)
@@ -150,8 +150,8 @@ def _track(net, meta, data, output_path):
             if cost_mat[r,c] >= MIN_IOU: # new detection for existing track
                 assignments[keys[c]] = state
             else: # new track
-                label += 1
-                new_tracks[label] = state
+                track_id+= 1
+                new_tracks[track_id] = state
         # build the measurements
         #_output_tracks(assignments, frame, output_path, prefix='assignment')
         ys = {}
