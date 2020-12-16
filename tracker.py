@@ -14,7 +14,7 @@ from kf import KF
 
 DETECT_THRESH = .5 # from SORT paper
 MIN_IOU       = .5 # TODO figure out what this should be
-TMIN          =  1
+TMIN          =  20
 
 def _get_data_raw(data_path):
     leafs = sorted(os.listdir(data_path))
@@ -116,11 +116,38 @@ def _track(net, meta, data, output_path):
 
     filt = KF(init_states)
     _output_tracks(filt.latest_live_states(), first_frame, output_path)
+    probation = defaultdict(lambda : 0) # label to num_missing count 
+    height, width, _ = cv2.imread(first_frame.decode('ascii')).shape
     
     # process remaining frames
     for frame in data:
+
+        # first kill outdated tracks
+        probation_killed = []
+        for label, count in probation.items():
+            if count > TMIN:
+                filt.kill_state(label)
+                probation_killed.append(label)
+
+        for label in probation_killed:
+            del probation[label]
+
         # predict motion of BB for existing tracks
+        # first kill bad predictions
         predictions = filt.predict()
+        bad_preds = []
+        for label, state in predictions.items():
+            cond = state[0] < 0 or state[1] < 0 or state[2] < 0
+            cond = cond or state[0] > width or state[1] > height
+            if cond:
+                bad_preds.append(label)
+                if label in probation.keys():
+                    del probation[label]
+        for label in bad_preds:
+            filt.kill_state(label)
+            del predictions[label]
+
+        # 
         bbs = list(map(lambda d: d[2], _detect_people(net, meta, frame)))
         keys = list(predictions.keys())
         iter_bounds = max(len(keys), len(bbs))
@@ -163,16 +190,17 @@ def _track(net, meta, data, output_path):
                     astate[1],
                     astate[2], 
                     astate[3],
-                    astate[0]-last_state[0], 
-                    astate[1]-last_state[1],
-                    astate[2]-last_state[2]
+                    astate[4], 
+                    astate[5],
+                    astate[6]
                 ])
             else:
-                filt.kill_state(label)
+                probation[label] += 1 
 
         filt.update(ys, predictions)
         for label, state in new_tracks.items():
             filt.birth_state(label, state)
+
         _output_tracks(filt.latest_live_states(), frame, output_path)
 
 

@@ -18,7 +18,7 @@ class KF:
         self.states = init_states # dict from `tracker.py` label to np.array (vec)
         self.live_states = set(init_states.keys())
         self.Pp = {
-            l: np.diag([2., 2., 4., 1., 100, 100, 100]) for l in init_states.keys()
+            l: np.diag([2., 2., 4., 1., 1000, 1000, 1000]) for l in init_states.keys()
          }           # dict from `tracker.py` label to np.array (mat)
 
 
@@ -39,7 +39,7 @@ class KF:
     def birth_state(self, label, state):
         self.live_states.add(label)
         self.states[label] = state
-        self.Pp[label] = np.diag([2., 2., 4., 1., 100, 100, 100])
+        self.Pp[label] = np.diag([2., 2., 4., 1., 1000, 1000, 1000])
 
 
     def kill_state(self, label):
@@ -47,16 +47,20 @@ class KF:
 
 
     def update(self, ys, preds):
-        for label in ys.keys():
-            y = ys[label]
-            pred = preds[label]
-            Pp = self.Pp[label]
-            Pkm = KF.F@Pp@np.transpose(KF.F)+KF.Q
-            K = Pkm@np.transpose(KF.H)@np.linalg.inv(KF.H@Pkm@np.transpose(KF.H)+KF.R)
+        for label in preds:
+            if not label in ys:
+                self.states[label] = preds[label]
+                self.Pp[label] = KF.F@self.Pp[label]@np.transpose(KF.F)+KF.Q
+            else:
+                y = ys[label]
+                pred = preds[label]
+                Pp = self.Pp[label]
+                Pkm = KF.F@Pp@np.transpose(KF.F)+KF.Q
+                K = Pkm@np.transpose(KF.H)@np.linalg.inv(KF.H@Pkm@np.transpose(KF.H)+KF.R)
 
-            self.states[label] = pred+K.dot(y-KF.H.dot(pred))
+                self.states[label] = pred+K.dot(y-KF.H.dot(pred))
 
-            t1 = K@KF.H
-            t2 = np.eye(t1.shape[0])
-            t3 = t2-t1
-            self.Pp[label] = t3@Pkm@np.transpose(t3)+K@KF.R@np.transpose(K)
+                t1 = K@KF.H
+                t2 = np.eye(t1.shape[0])
+                t3 = t2-t1
+                self.Pp[label] = t3@Pkm@np.transpose(t3)+K@KF.R@np.transpose(K)
